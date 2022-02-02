@@ -5,8 +5,9 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import * as dat from 'dat.gui'
 
 // Models
+let mixer;
 const loader = new GLTFLoader();
-loader.load('models/mine_scene2/scene.gltf', function (gltf) {
+loader.load('models/mine_scene7/scene.gltf', function (gltf) {
     gltf.scene.traverse( function ( object ) {
 
         if ( object.isMesh ) {
@@ -15,13 +16,20 @@ loader.load('models/mine_scene2/scene.gltf', function (gltf) {
             if ( !object.material.depthWrite && !object.name.includes("Water")){
                 object.material.depthWrite = true
             }
-            if ( object.name.includes("Seagrass") || object.name.includes("Kelp") || object.name === ("grass")){
+            if ( object.name.includes("Seagrass") || object.name.includes("Kelp") || object.name === ("grass")||object.name === ("clouds")){
                 object.material.alphaTest = 0.5
             }
         }
-
     })
     scene.add(gltf.scene)
+    const model = gltf.scene
+    mixer = new THREE.AnimationMixer(model)
+    const clips = gltf.animations
+    clips.forEach(function(clip){
+        const action = mixer.clipAction(clip)
+        console.log('dando play na animação ', action)
+        action.play()
+    })
 })
 
 // Debug
@@ -135,6 +143,10 @@ const tick = () =>
     controls.update()
 
     // Render
+    if (mixer){
+        mixer.update(clock.getDelta())
+    }
+    
     renderer.render(scene, camera)
 
     // Call tick again on the next frame
