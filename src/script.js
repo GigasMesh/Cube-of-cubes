@@ -1,33 +1,80 @@
 import './style.css'
 import * as THREE from 'three'
+import { RGBELoader } from "three/examples/jsm/loaders/RGBELoader.js";
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import * as dat from 'dat.gui'
+import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 
 // Models
-let mixer;
+let composer;
+let mixer_scene, mixer_sun_moon;
+const params = {
+    exposure: 0.7,
+    bloomStrength: 0.159,
+    bloomThreshold: 0,
+    bloomRadius: 0.5
+};
+
 const loader = new GLTFLoader();
 loader.load('models/mine_scene7/scene.gltf', function (gltf) {
     gltf.scene.traverse( function ( object ) {
 
         if ( object.isMesh ) {
+            object.frustumCulled = false
             object.castShadow = true
             object.receiveShadow = true
+            if (object.name === ("clouds")){
+                object.receiveShadow = false
+                object.material.side = 0
+            }
+            if (object.name.includes("Water")){
+                const waterTex = object.material.map
+
+                object.material = new THREE.MeshPhysicalMaterial({
+                    map:waterTex,
+                    clearcoat:1,
+                    transparent: true,
+                    side: 2,
+                })
+            }
+            if (!object.name.includes("Water") && object.material.transparent) {
+                object.material.transparent = false
+                object.material.alphaTest = 0.5
+            }
             if ( !object.material.depthWrite && !object.name.includes("Water")){
                 object.material.depthWrite = true
             }
-            if ( object.name.includes("Seagrass") || object.name.includes("Kelp") || object.name === ("grass")||object.name === ("clouds")){
+            if ( object.name.includes("Seagrass") || object.name.includes("Kelp") || object.name === ("grass")){
                 object.material.alphaTest = 0.5
             }
         }
     })
     scene.add(gltf.scene)
+
     const model = gltf.scene
-    mixer = new THREE.AnimationMixer(model)
+    mixer_scene = new THREE.AnimationMixer(model)
     const clips = gltf.animations
     clips.forEach(function(clip){
-        const action = mixer.clipAction(clip)
-        console.log('dando play na animação ', action)
+        const action = mixer_scene.clipAction(clip)
+        action.play()
+    })
+})
+
+loader.load('models/sun_moon/sun_moon.glb', function (gltf) {
+    gltf.scene.traverse( function ( object ) {
+        if (object.isMesh){
+
+        }
+    })
+    scene.add(gltf.scene)
+    const model = gltf.scene
+    mixer_sun_moon = new THREE.AnimationMixer(model)
+    const clips = gltf.animations
+    clips.forEach(function(clip){
+        const action = mixer_sun_moon.clipAction(clip)
         action.play()
     })
 })
@@ -35,14 +82,36 @@ loader.load('models/mine_scene7/scene.gltf', function (gltf) {
 // Debug
 const gui = new dat.GUI()
 
+gui.add( params, 'exposure', 0.1, 2 ).onChange( function ( value ) {
+
+    renderer.toneMappingExposure = Math.pow( value, 4.0 );
+
+} );
+
+gui.add( params, 'bloomThreshold', 0.0, 1.0 ).onChange( function ( value ) {
+
+    bloomPass.threshold = Number( value );
+
+} );
+
+gui.add( params, 'bloomStrength', 0.0, 3.0 ).onChange( function ( value ) {
+
+    bloomPass.strength = Number( value );
+
+} );
+
+gui.add( params, 'bloomRadius', 0.0, 1.0 ).step( 0.01 ).onChange( function ( value ) {
+
+    bloomPass.radius = Number( value );
+
+} );
+
 // Canvas
 const canvas = document.querySelector('canvas.webgl')
 
 // Scene
 const scene = new THREE.Scene()
 
-// Objects
-const geometry = new THREE.TorusGeometry( .7, .2, 16, 100 );
 
 // Materials
 const material = new THREE.MeshStandardMaterial()
@@ -52,11 +121,6 @@ material.color = new THREE.Color(0xff0000)
 
 material.opacity = 0.2;
 
-
-// Mesh
-const donut = new THREE.Mesh(geometry,material)
-donut.castShadow = true
-//scene.add(donut)
 
 // Lights
 const hemisphereLight = new THREE.HemisphereLight( 0xffffff, 0xffffff, 1 );
@@ -104,7 +168,7 @@ window.addEventListener('resize', () =>
  * Camera
  */
 // Base camera
-const camera = new THREE.PerspectiveCamera(75, sizes.width / sizes.height, 0.1, 100)
+const camera = new THREE.PerspectiveCamera(75, sizes.width / sizes.height, 0.1, 550)
 camera.position.x = 0
 camera.position.y = 50
 camera.position.z = 2
@@ -119,11 +183,26 @@ controls.enableDamping = true
  */
 const renderer = new THREE.WebGLRenderer({
     canvas: canvas,
+    antialias: true
 })
 renderer.shadowMap.enabled = true
 
+renderer.outputEncoding = THREE.sRGBEncoding;
+
+renderer.setClearColor( 0x8caaff, 1);
 renderer.setSize(sizes.width, sizes.height)
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
+
+const renderScene = new RenderPass( scene, camera );
+
+const bloomPass = new UnrealBloomPass( new THREE.Vector2( window.innerWidth, window.innerHeight ), 1.5, 0.4, 0.85 );
+bloomPass.threshold = params.bloomThreshold;
+bloomPass.strength = params.bloomStrength;
+bloomPass.radius = params.bloomRadius;
+
+composer = new EffectComposer( renderer );
+composer.addPass( renderScene );
+composer.addPass( bloomPass );
 
 /**
  * Animate
@@ -133,21 +212,26 @@ const clock = new THREE.Clock()
 
 const tick = () =>
 {
-
-    const elapsedTime = clock.getElapsedTime()
-
-    // Update objects
-    //donut.rotation.y = 2 * elapsedTime
+    const elaspsedTime = clock.elapsedTime
 
     // Update Orbital Controls
     controls.update()
 
     // Render
-    if (mixer){
-        mixer.update(clock.getDelta())
+    if (mixer_scene){
+        mixer_scene.update(clock.getDelta())
     }
-    
-    renderer.render(scene, camera)
+    if (mixer_sun_moon){
+        mixer_sun_moon.update(clock.getDelta())
+    }
+
+    /*
+    if (elaspsedTime>5){
+        renderer.setClearColor( 0xffffff, 1);
+    }*/
+
+    composer.render();
+    //renderer.render(scene, camera)
 
     // Call tick again on the next frame
     window.requestAnimationFrame(tick)
