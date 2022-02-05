@@ -1,25 +1,30 @@
 import './style.css'
 import * as THREE from 'three'
-import { RGBELoader } from "three/examples/jsm/loaders/RGBELoader.js";
+import * as dat from 'dat.gui'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import * as dat from 'dat.gui'
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
+import { SSRPass } from 'three/examples/jsm/postprocessing/SSRPass.js';
+import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
+import { GammaCorrectionShader } from 'three/examples/jsm/shaders/GammaCorrectionShader.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
+
 
 // Models
 let composer;
-let mixer_scene, mixer_sun_moon;
+let ssrPass, selects = [];
+let mixer_scene, mixer_sun_moon, mixer_dolphin;
 const params = {
     exposure: 0.7,
     bloomStrength: 0.159,
     bloomThreshold: 0,
     bloomRadius: 0.5
 };
-
 const loader = new GLTFLoader();
 loader.load('models/mine_scene7/scene.gltf', function (gltf) {
+    selects.push(gltf.scene.children[18].children[0])
+
     gltf.scene.traverse( function ( object ) {
 
         if ( object.isMesh ) {
@@ -28,17 +33,19 @@ loader.load('models/mine_scene7/scene.gltf', function (gltf) {
             object.receiveShadow = true
             if (object.name === ("clouds")){
                 object.receiveShadow = false
-                object.material.side = 0
+                object.material = new THREE.MeshBasicMaterial()
             }
             if (object.name.includes("Water")){
+
                 const waterTex = object.material.map
 
                 object.material = new THREE.MeshPhysicalMaterial({
-                    map:waterTex,
+                    map: waterTex,
                     clearcoat:1,
                     transparent: true,
                     side: 2,
                 })
+                object.castShadow = false
             }
             if (!object.name.includes("Water") && object.material.transparent) {
                 object.material.transparent = false
@@ -54,19 +61,37 @@ loader.load('models/mine_scene7/scene.gltf', function (gltf) {
     })
     scene.add(gltf.scene)
 
-    const model = gltf.scene
+    /*const model = gltf.scene
     mixer_scene = new THREE.AnimationMixer(model)
     const clips = gltf.animations
     clips.forEach(function(clip){
         const action = mixer_scene.clipAction(clip)
         action.play()
-    })
+    })*/
 })
 
 loader.load('models/sun_moon/sun_moon.glb', function (gltf) {
     gltf.scene.traverse( function ( object ) {
         if (object.isMesh){
+            const tex = object.material.emissiveMap
+            object.material.map = tex
+        }
+    })
+    scene.add(gltf.scene)
+    const model = gltf.scene
+    mixer_dolphin = new THREE.AnimationMixer(model)
+    const clips = gltf.animations
+    clips.forEach(function(clip){
+        const action = mixer_dolphin.clipAction(clip)
+        action.play()
+    })
+})
 
+loader.load('models/dolphin/dolphin.glb', function (gltf) {
+    gltf.scene.traverse( function ( object ) {
+        if (object.isMesh){
+            object.frustumCulled = false
+            object.castShadow = true
         }
     })
     scene.add(gltf.scene)
@@ -83,44 +108,28 @@ loader.load('models/sun_moon/sun_moon.glb', function (gltf) {
 const gui = new dat.GUI()
 
 gui.add( params, 'exposure', 0.1, 2 ).onChange( function ( value ) {
-
     renderer.toneMappingExposure = Math.pow( value, 4.0 );
-
 } );
 
 gui.add( params, 'bloomThreshold', 0.0, 1.0 ).onChange( function ( value ) {
-
     bloomPass.threshold = Number( value );
-
 } );
 
 gui.add( params, 'bloomStrength', 0.0, 3.0 ).onChange( function ( value ) {
-
     bloomPass.strength = Number( value );
-
 } );
 
 gui.add( params, 'bloomRadius', 0.0, 1.0 ).step( 0.01 ).onChange( function ( value ) {
-
     bloomPass.radius = Number( value );
-
 } );
+
+
 
 // Canvas
 const canvas = document.querySelector('canvas.webgl')
 
 // Scene
 const scene = new THREE.Scene()
-
-
-// Materials
-const material = new THREE.MeshStandardMaterial()
-material.metalness = 0.7
-material.roughness = 0.2
-material.color = new THREE.Color(0xff0000)
-
-material.opacity = 0.2;
-
 
 // Lights
 const hemisphereLight = new THREE.HemisphereLight( 0xffffff, 0xffffff, 1 );
@@ -187,8 +196,6 @@ const renderer = new THREE.WebGLRenderer({
 })
 renderer.shadowMap.enabled = true
 
-renderer.outputEncoding = THREE.sRGBEncoding;
-
 renderer.setClearColor( 0x8caaff, 1);
 renderer.setSize(sizes.width, sizes.height)
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
@@ -201,8 +208,23 @@ bloomPass.strength = params.bloomStrength;
 bloomPass.radius = params.bloomRadius;
 
 composer = new EffectComposer( renderer );
+
+ssrPass = new SSRPass( {
+    renderer,
+    scene,
+    camera,
+    fresnel: true,
+    distanceAttenuation: true,
+    width: innerWidth,
+    height: innerHeight,
+    selects: selects
+} );
 composer.addPass( renderScene );
+//composer.addPass( ssrPass );
 composer.addPass( bloomPass );
+
+composer.addPass( new ShaderPass( GammaCorrectionShader ) );
+
 
 /**
  * Animate
@@ -231,7 +253,6 @@ const tick = () =>
     }*/
 
     composer.render();
-    //renderer.render(scene, camera)
 
     // Call tick again on the next frame
     window.requestAnimationFrame(tick)
